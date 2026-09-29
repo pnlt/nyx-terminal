@@ -1,0 +1,91 @@
+{
+  config,
+  pkgs,
+  lib,
+  ...
+}: let
+  cfg = config.shared.macchina;
+in
+  with lib; {
+    options.shared.macchina = {
+      enable = mkEnableOption "Shared macchina";
+
+      ascii = mkOption {
+        type = types.nullOr types.lines;
+        default = null;
+        description = "Custom ASCII art rendered by Macchina.";
+      };
+    };
+
+    config = mkIf cfg.enable {
+      home.packages = [
+        pkgs.macchina
+      ];
+
+      xdg.configFile = {
+        "macchina/macchina.toml".text = builtins.readFile ./macchina.toml;
+        "macchina/themes/yttrium.toml".text = ''
+          spacing = 1
+          padding = 0
+          hide_ascii = false
+          prefer_small_ascii = true
+          separator = "λ"
+          # key_color = "#583ba3"
+          key_color = "#7aa2f7"
+          separator_color = "#a9b1d6"
+
+
+          [palette]
+          type = "Dark"
+          visible = true
+          glyph = "[-][+] "
+
+          [bar]
+          # glyph = "||"
+          symbol_open = '['
+          symbol_close = ']'
+          hide_delimiters = true
+          visible = false
+
+          [box]
+          title = "Yttrium"
+          border = "double"
+          visible = false
+
+          [box.inner_margin]
+          x = 2
+          y = 0
+
+          ${optionalString (cfg.ascii != null) ''
+            [custom_ascii]
+            color = "#bb9af7"
+            path = "${pkgs.writeText "macchina-ascii" cfg.ascii}"
+          ''}
+
+          [randomize]
+          key_color = false
+          separator_color = false
+
+          [keys]
+          host = "Host"
+          kernel = "Kernel"
+          battery = "Battery"
+          os = "OS"
+          de = "DE"
+          wm = "WM"
+          distro = "Distro"
+          terminal = "Terminal"
+          shell = "Shell"
+          packages = "Packages"
+          uptime = "Uptime"
+          memory = "Memory"
+          machine = "Machine"
+          local_ip = "Local IP"
+          backlight = "Brightness"
+          resolution = "Resolution"
+          cpu_load = "CPU Load"
+          cpu = "CPU"
+        '';
+      };
+    };
+  }

@@ -1,0 +1,509 @@
+#!/usr/bin/env perl
+use strict;
+use warnings;
+
+my $MODE = shift @ARGV || 'pre-commit';
+my $GIT = $ENV{COMMENT_BUDGET_GIT} || 'git';
+
+exit 0 if lc($ENV{COMMENT_BUDGET} || '') =~ /^(off|0|no|skip)$/;
+
+my $MAX_BLOCK_LINES = cfg('MAX_BLOCK_LINES', 2);
+my $MAX_BLOCKS      = cfg('MAX_BLOCKS',      2);
+my $MIN_BLOCKS      = cfg('MIN_BLOCKS',      1);
+my $CODE_PER_BLOCK  = cfg('CODE_PER_BLOCK',  400);
+my $MAX_DENSITY     = cfg('MAX_DENSITY_PCT', 3);
+my $FREE_LINES      = cfg('FREE_LINES',      2);
+
+my $EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
+
+sub cfg {
+    my ($key, $default) = @_;
+    my $raw = $ENV{"COMMENT_BUDGET_$key"};
+    return $default unless defined $raw && $raw =~ /^\d+$/;
+    return $raw + 0;
+}
+
+sub git {
+    my @cmd = @_;
+    my $pid = open(my $fh, '-|');
+    return undef unless defined $pid;
+    unless ($pid) {
+        open(STDERR, '>', '/dev/null');
+        exec($GIT, @cmd);
+        exit 127;
+    }
+    local $/;
+    my $out = <$fh>;
+    close $fh;
+    return $? == 0 ? $out : undef;
+}
+
+my %CONTENT;
+my ($NEW_REV, $OLD_REV) = ('', 'HEAD');
+
+sub file_content {
+    my ($path, $side) = @_;
+    return undef unless defined $path;
+
+    my $key = "$side\0$path";
+    return $CONTENT{$key} if exists $CONTENT{$key};
+
+    if ($MODE eq 'worktree' && $side eq 'new') {
+        open my $fh, '<', $path or return $CONTENT{$key} = undef;
+        local $/;
+        return $CONTENT{$key} = <$fh>;
+    }
+
+    my $rev = $side eq 'old' ? $OLD_REV : $NEW_REV;
+    return $CONTENT{$key} = git('show', "$rev:$path");
+}
+
+my $git_dir = $ENV{GIT_DIR};
+unless (defined $git_dir && -d $git_dir) {
+    chomp($git_dir = git('rev-parse', '--absolute-git-dir') // '');
+}
+exit 0 unless length $git_dir && -d $git_dir;
+
+for my $marker (qw(rebase-merge rebase-apply MERGE_HEAD CHERRY_PICK_HEAD REVERT_HEAD BISECT_LOG)) {
+    exit 0 if -e "$git_dir/$marker";
+}
+
+my ($diff, $is_amend, $head) = ('', 0, '');
+
+if ($MODE eq 'post-commit') {
+    my @parents = split ' ', (git('rev-list', '--parents', '-n', '1', 'HEAD') // '');
+    exit 0 unless @parents;
+    $head = shift @parents;
+    exit 0 if @parents > 1;
+
+    my $base = @parents ? $parents[0] : $EMPTY_TREE;
+    ($NEW_REV, $OLD_REV) = ('HEAD', $base);
+    $diff = git('diff', $base, 'HEAD', '--unified=0', '--no-color', '--no-ext-diff', '-M') // '';
+
+    $is_amend = 1 if (git('reflog', '-1', '--format=%gs') // '') =~ /^commit \(amend\)/;
+} elsif ($MODE eq 'worktree') {
+    $diff = git('diff', 'HEAD', '--unified=0', '--no-color', '--no-ext-diff',
+                '--diff-filter=ACMR', '-M') // '';
+} else {
+    $diff = git('diff', '--cached', '--unified=0', '--no-color', '--no-ext-diff',
+                '--diff-filter=ACMR', '-M') // '';
+}
+
+my $C_LIKE  = {line => ['//'], block => [['/*', '*/']]};
+my $HASH    = {line => ['#']};
+my $DASH    = {line => ['--']};
+my $SEMI    = {line => [';']};
+
+my $NIX = {
+    line      => ['#'],
+    quotes    => ['"'],
+    multiline => [{open => q{''}, close => q{''}, escape => qr/^''[\$'\\]/}],
+};
+
+my $PY = {
+    line      => ['#'],
+    multiline => [{open => '"""', close => '"""'}, {open => q{'''}, close => q{'''}}],
+};
+
+my %LANG = (
+    (map { $_ => $HASH } qw(sh bash zsh fish ksh rb pl pm t yaml yml toml
+                            tf tfvars hcl cfg conf ini service desktop mk just env r jl)),
+    (map { $_ => $PY } qw(py pyi)),
+    nix => $NIX,
+    (map { $_ => $C_LIKE } qw(go rs c h cc cpp cxx hpp hh m mm java kt kts swift scala
+                              dart php cs zig proto gradle groovy jsonnet)),
+    (map { $_ => $C_LIKE } qw(js jsx mjs cjs ts tsx mts cts)),
+    (map { $_ => {block => [['/*', '*/']]} } qw(css scss less)),
+    lua  => {line => ['--'], block => [['--[[', ']]']]},
+    sql  => $DASH,
+    hs   => {line => ['--'], block => [['{-', '-}']]},
+    elm  => $DASH,
+    el   => $SEMI,
+    lisp => $SEMI,
+    clj  => $SEMI,
+    scm  => $SEMI,
+    html => {block => [['<!--', '-->']]},
+    xml  => {block => [['<!--', '-->']]},
+);
+
+my %BY_NAME = (
+    map { $_ => $HASH } qw(Makefile makefile GNUmakefile Dockerfile Containerfile
+                           justfile Justfile .envrc .gitignore .gitattributes
+                           .dockerignore .editorconfig),
+);
+
+my @EXEMPT = (
+    qr{^#!},
+    qr{^(?://|\#|--|;)\s*SPDX-},
+    qr{^//\s*(?:go:|nolint|lint:|\+build|\@ts-|eslint|prettier-|biome-|oxlint|deno-lint|istanbul|jscpd:|coverage:|c8\b|v8\b)},
+    qr{^///\s*<reference},
+    qr{^\#\s*(?:shellcheck|noqa|type:\s*ignore|pylint:|mypy:|ruff:|fmt:|nosec|pragma:|-\*-|nix-shell|hadolint|checkov:|trivy:|gitleaks:)},
+    qr{^---\s*@?\w+},
+    qr{^--\s*(?:luacheck:|selene:|stylua:)},
+    qr{^/\*\s*(?:eslint|global|istanbul|prettier|jshint|\@ts-|c8|v8)},
+    qr{^<!--\s*(?:prettier-ignore|markdownlint)},
+);
+
+sub lang_for {
+    my ($path) = @_;
+    return undef if $path =~ m{(?:^|/)(?:vendor|node_modules|third_party|\.direnv|dist|__generated__|__snapshots__)/};
+
+    (my $base = $path) =~ s{.*/}{};
+    return undef if $base =~ /^(?:flake\.lock|package-lock\.json|yarn\.lock|pnpm-lock\.yaml|Cargo\.lock|go\.sum|poetry\.lock)$/;
+    return undef if $base =~ /\.(?:md|mdx|txt|rst|json|lock|snap|svg|patch|diff|csv|tsv|golden|min\.js|min\.css|pb\.go|pb\.gw\.go|_templ\.go|generated\.go|g\.dart|freezed\.dart)$/i;
+    return $BY_NAME{$base} if $BY_NAME{$base};
+
+    my ($ext) = $base =~ /\.([A-Za-z0-9_]+)$/;
+    return undef unless defined $ext;
+    return $LANG{lc $ext};
+}
+
+sub exempt {
+    my ($text) = @_;
+    for my $rx (@EXEMPT) {
+        return 1 if $text =~ $rx;
+    }
+    return 0;
+}
+
+sub boundary_ok {
+    my ($text, $pos) = @_;
+    return 1 if $pos == 0;
+    return substr($text, $pos - 1, 1) =~ /[\s;)\]},=]/ ? 1 : 0;
+}
+
+sub string_end {
+    my ($text, $from, $spec) = @_;
+    my ($close, $escape) = ($spec->{close}, $spec->{escape});
+    my $at = $from;
+    while (($at = index($text, $close, $at)) >= 0) {
+        return $at + length $close
+            unless $escape && substr($text, $at) =~ $escape;
+        $at += length($close) + 1;
+    }
+    return -1;
+}
+
+sub classify {
+    my ($text, $lang, $state) = @_;
+    $state->{tail} = undef;
+
+    if ($state->{closer}) {
+        my $closer = $state->{closer};
+        my $at = index($text, $closer);
+        $state->{tail} = $at < 0 ? $text : substr($text, 0, $at);
+        return 'comment' if $at < 0;
+        $state->{closer} = undef;
+        my $rest = substr($text, $at + length $closer);
+        return $rest =~ /\S/ ? 'code+comment' : 'comment';
+    }
+
+    my $n = length $text;
+    my ($i, $quote, $start) = (0, '', -1);
+    my $resumed = 0;
+
+    if (my $open = $state->{string}) {
+        my $at = string_end($text, 0, $open);
+        return 'code' if $at < 0;
+        $state->{string} = undef;
+        $i = $at;
+        $resumed = 1;
+    }
+
+    my $openers = $lang->{openers} ||= [
+        sort { length($b) <=> length($a) }
+            (@{$lang->{line} || []}, map { $_->[0] } @{$lang->{block} || []})
+    ];
+    my $closer_of = $lang->{closer_of} ||=
+        {map { $_->[0] => $_->[1] } @{$lang->{block} || []}};
+    my $strings = $lang->{multiline} || [];
+    my $quotes  = $lang->{quotes}    || ['"', "'", '`'];
+
+    unless ($resumed) {
+        my $seen = 0;
+        for my $tok (@$openers, map { $_->{open} } @$strings) {
+            $seen = 1, last if index($text, $tok) >= 0;
+        }
+        return $text =~ /\S/ ? 'code' : 'blank' unless $seen;
+    }
+
+    SCAN: while ($i < $n) {
+        my $c = substr($text, $i, 1);
+
+        if ($quote) {
+            $i += ($c eq '\\') ? 2 : 1;
+            $quote = '' if $c eq $quote;
+            next;
+        }
+
+        for my $spec (@$strings) {
+            my $open = $spec->{open};
+            next unless substr($text, $i, length $open) eq $open;
+
+            my $end = string_end($text, $i + length $open, $spec);
+            if ($end < 0) {
+                $state->{string} = $spec;
+                $i = $n;
+                next SCAN;
+            }
+            $i = $end;
+            next SCAN;
+        }
+
+        if (grep { $c eq $_ } @$quotes) {
+            $quote = $c;
+            $i++;
+            next;
+        }
+
+        for my $tok (@$openers) {
+            next unless substr($text, $i, length $tok) eq $tok;
+            next unless boundary_ok($text, $i);
+
+            my $closer = $closer_of->{$tok};
+            if (!$closer) {
+                $start = $i;
+                last SCAN;
+            }
+
+            my $end = index($text, $closer, $i + length $tok);
+            if ($end < 0) {
+                $state->{closer} = $closer;
+                $start = $i;
+                last SCAN;
+            }
+            $start = $i if $start < 0;
+            $i = $end + length $closer;
+            next SCAN;
+        }
+        $i++;
+    }
+
+    return ($resumed || $text =~ /\S/) ? 'code' : 'blank' if $start < 0;
+
+    my $payload = substr($text, $start);
+    my $before  = substr($text, 0, $start);
+    return 'exempt' if exempt($payload);
+    $state->{tail} = $payload;
+    return $before =~ /\S/ ? 'code+comment' : 'comment';
+}
+
+if ($MODE eq 'worktree') {
+    for my $path (split /\n/, git('ls-files', '-o', '--exclude-standard') // '') {
+        next unless length $path && lang_for($path);
+        my $content = file_content($path, 'new') // next;
+        my @lines = split /\n/, $content, -1;
+        pop @lines if @lines && $lines[-1] eq '';
+        next unless @lines;
+        $diff .= "--- /dev/null\n"
+               . "+++ b/$path\n"
+               . sprintf("\@\@ -0,0 +1,%d \@\@\n", scalar @lines)
+               . join('', map { "+$_\n" } @lines);
+    }
+}
+
+exit 0 unless length $diff;
+
+my (@files, %added_of, %removed_of, %old_of, %seen, $file, $lang, $lineno, $oldno, $hunk);
+my @lines = split /\n/, $diff, -1;
+
+for (my $k = 0; $k <= $#lines; $k++) {
+    my $raw = $lines[$k];
+
+    if ($raw =~ m{^--- (?:a/)?(.+)$} && $k < $#lines && $lines[$k + 1] =~ m{^\+\+\+ (?:b/)?(.+)$}) {
+        my $old = $1;
+        $k++;
+        $lines[$k] =~ m{^\+\+\+ (?:b/)?(.+)$};
+        $file = $1 eq '/dev/null' ? undef : $1;
+        $lang = defined $file ? lang_for($file) : undef;
+        $old_of{$file} = $old eq '/dev/null' ? undef : $old if defined $file;
+        ($lineno, $oldno) = (undef, undef);
+        next;
+    }
+    if ($raw =~ /^@@ -(\d+)(?:,\d+)? \+(\d+)/) {
+        ($oldno, $lineno) = ($1, $2);
+        $hunk++;
+        next;
+    }
+    next unless defined $lang && defined $lineno;
+
+    if ($raw =~ /^\+/) {
+        push @files, $file unless $seen{$file}++;
+        push @{$added_of{$file}},
+            {file => $file, line => $lineno++, hunk => $hunk, text => substr($raw, 1)};
+    } elsif ($raw =~ /^-/) {
+        push @files, $file unless $seen{$file}++;
+        push @{$removed_of{$file}},
+            {file => $file, line => $oldno++, hunk => $hunk, text => substr($raw, 1)};
+    }
+}
+
+sub classify_side {
+    my ($path, $lang, $side, $entries) = @_;
+    my %state;
+
+    my $content = file_content($path, $side);
+    if (defined $content) {
+        my %wanted = map { $_->{line} => 1 } @$entries;
+        my (@kinds, $at);
+        for my $text (split /\n/, $content, -1) {
+            $at++;
+            my $kind = classify($text, $lang, \%state);
+            push @kinds, [$kind, $state{tail}] if $wanted{$at};
+        }
+        if (@kinds == @$entries) {
+            @{$entries->[$_]}{qw(kind tail)} = @{$kinds[$_]} for 0 .. $#kinds;
+            return;
+        }
+        %state = ();
+    }
+
+    for my $entry (@$entries) {
+        $entry->{kind} = classify($entry->{text}, $lang, \%state);
+        $entry->{tail} = $state{tail};
+    }
+}
+
+my (@added, %reworded);
+
+for my $path (@files) {
+    $lang = lang_for($path);
+
+    if (my $entries = $added_of{$path}) {
+        classify_side($path, $lang, 'new', $entries);
+        push @added, @$entries;
+    }
+    next unless my $gone = $removed_of{$path};
+
+    classify_side($old_of{$path} // $path, $lang, 'old', $gone);
+    for my $entry (@$gone) {
+        $reworded{$entry->{hunk}}++
+            if $entry->{kind} eq 'comment' || $entry->{kind} eq 'code+comment';
+    }
+}
+
+my ($code_lines, $comment_lines) = (0, 0);
+my @blocks;
+my $run;
+
+for my $entry (@added) {
+    my $kind = $entry->{kind};
+    $code_lines++ if $kind eq 'code' || $kind eq 'code+comment';
+
+    if (($kind eq 'comment' || $kind eq 'code+comment') && $reworded{$entry->{hunk}}) {
+        $reworded{$entry->{hunk}}--;
+        $kind = $kind eq 'comment' ? 'rewrite' : 'code';
+    }
+    $comment_lines++ if $kind eq 'comment' || $kind eq 'code+comment';
+
+    if ($kind eq 'rewrite') {
+        $run->{last} = $entry->{line}
+            if $run && $run->{file} eq $entry->{file} && $run->{last} + 1 == $entry->{line};
+        next;
+    }
+
+    if ($kind eq 'comment') {
+        if ($run && $run->{file} eq $entry->{file} && $run->{last} + 1 == $entry->{line}) {
+            $run->{size}++;
+            $run->{last} = $entry->{line};
+            next;
+        }
+        $run = {file => $entry->{file}, line => $entry->{line}, last => $entry->{line}, size => 1, trailing => 0};
+        push @blocks, $run;
+        next;
+    }
+
+    $run = undef;
+    push @blocks, {file => $entry->{file}, line => $entry->{line}, size => 1, trailing => 1}
+        if $kind eq 'code+comment';
+}
+
+my @dashed = grep { defined $_->{tail} && $_->{tail} =~ /\xE2\x80\x94/ } @added;
+
+exit 0 unless @blocks || @dashed;
+
+my $budget = int($code_lines / $CODE_PER_BLOCK);
+$budget = $MIN_BLOCKS if $budget < $MIN_BLOCKS;
+$budget = $MAX_BLOCKS if $budget > $MAX_BLOCKS;
+
+my $allowance = int($code_lines * $MAX_DENSITY / 100);
+$allowance = $FREE_LINES if $allowance < $FREE_LINES;
+
+my @oversized = grep { $_->{size} > $MAX_BLOCK_LINES } @blocks;
+my $over_budget  = @blocks > $budget;
+my $over_density = $comment_lines > $allowance;
+my $overspent    = @oversized || $over_budget || $over_density;
+
+exit 0 unless $overspent || @dashed;
+
+my $verb = $MODE eq 'post-commit' ? 'commit undone'
+         : $MODE eq 'worktree'    ? 'fix before continuing'
+         :                          'commit refused';
+my @out = ("");
+
+if ($overspent) {
+    push @out, "comment budget exceeded - $verb", "";
+
+    push @out, sprintf("  earned  %d added code line%s",
+        $code_lines, $code_lines == 1 ? '' : 's');
+    push @out, sprintf("  budget  %d block%s, <=%d lines each, %d comment line%s total",
+        $budget, $budget == 1 ? '' : 's', $MAX_BLOCK_LINES,
+        $allowance, $allowance == 1 ? '' : 's');
+    push @out, sprintf("  spent   %d block%s, %d comment line%s",
+        scalar @blocks, @blocks == 1 ? '' : 's',
+        $comment_lines, $comment_lines == 1 ? '' : 's');
+    push @out, "";
+
+    my $width = 0;
+    for my $b (@blocks) {
+        my $len = length("$b->{file}:$b->{line}");
+        $width = $len if $len > $width;
+    }
+    for my $b (@blocks) {
+        my $note = $b->{trailing} ? 'trailing' : sprintf('%d line%s', $b->{size}, $b->{size} == 1 ? '' : 's');
+        $note .= ' - over block cap' if $b->{size} > $MAX_BLOCK_LINES;
+        push @out, sprintf("  %-*s  %s", $width, "$b->{file}:$b->{line}", $note);
+    }
+
+    push @out, "",
+        "Assume the right number of comments is zero. A comment earns its line only",
+        "when the behavior is rare enough that reading the code does not explain it.",
+        "Everything else is reasoning, and reasoning belongs in the commit body, where",
+        "it cannot rot away from the code it claims to describe.",
+        "",
+        "Delete what the code already says. What survives, spend the budget on.",
+        "";
+}
+
+if (@dashed) {
+    push @out, "em dash in comment - $verb", "";
+    push @out, map { "  $_->{file}:$_->{line}" } @dashed;
+    push @out, "",
+        "Rewrite it with a comma, a colon, parentheses, or a new sentence.",
+        "";
+}
+
+if ($MODE eq 'worktree') {
+    print STDERR join("\n", @out);
+    exit 2;
+}
+
+if ($MODE eq 'post-commit') {
+    my @parents = split ' ', (git('rev-list', '--parents', '-n', '1', 'HEAD') // '');
+    shift @parents;
+
+    if ($is_amend || !@parents) {
+        push @out, "Not reset automatically (amend or root commit). Fix it by hand.", "";
+        print STDERR join("\n", @out);
+        exit 0;
+    }
+
+    system($GIT, 'reset', '--soft', 'HEAD^');
+    push @out, "Changes are back in the index, nothing lost. Orphaned commit: "
+        . substr($head, 0, 12) . " (reflog).", "";
+    print STDERR join("\n", @out);
+    exit 0;
+}
+
+print STDERR join("\n", @out);
+exit 1;

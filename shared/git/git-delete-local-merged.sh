@@ -1,0 +1,4 @@
+#!/bin/sh
+
+git remote prune origin
+git branch -d `git branch --merged | grep -v '^*' | grep -v 'master' | tr -d '\n'`
