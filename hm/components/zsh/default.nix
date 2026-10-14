@@ -51,7 +51,8 @@ in
         history = {
           expireDuplicatesFirst = true;
           ignoreSpace = true;
-          save = 10000 * 2;
+          size = 200000;
+          save = 100000;
         };
 
         syntaxHighlighting = {
