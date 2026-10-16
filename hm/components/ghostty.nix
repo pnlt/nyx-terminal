@@ -40,7 +40,8 @@ in
             cursor-style-blink = "false";
             font-synthetic-style = "bold";
 
-            background-opacity = "0.8";
+            background-opacity = "0.92";
+            background-opacity-cells = "true";
             link-url = "true";
             working-directory = "home";
 
