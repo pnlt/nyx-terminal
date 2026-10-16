@@ -35,13 +35,13 @@ in
 
         settings =
           {
-            theme = "Iceberg Dark";
+            theme = "/home/pnlt/nixos-dotfiles/config/ghostty/themes/guts";
             cursor-style = "bar";
             cursor-style-blink = "false";
             font-synthetic-style = "bold";
 
-            background-opacity = "0.88";
-            background-opacity-cells = "true";
+            background-opacity = "0.8";
+            # background-opacity-cells = "true";
             link-url = "true";
             working-directory = "home";
 
