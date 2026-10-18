@@ -110,6 +110,13 @@ in {
   config = mkIf cfg.enable {
     programs.tmux = {
       enable = true;
+      terminal = "tmux-256color";
+      escapeTime = 0;
+      aggressiveResize = false;
+      baseIndex = 100;
+      historyLimit = 1000000;
+      mouse = true;
+      keyMode = "vi";
       extraConfig =
         builtins.readFile ./tmux.conf
         + "\n"
