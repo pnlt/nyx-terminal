@@ -27,7 +27,8 @@ in
         completionInit = builtins.readFile ./completionInit.zsh;
 
         loginExtra = ''
-          if [ -z "$WAYLAND_DISPLAY" ] && [ -z "\( DISPLAY"] && ["'' \){XDG_VTNR:-0}" = "1"]; then
+
+          if [ -z "$WAYLAND_DISPLAY" ] && [ -z "$DISPLAY" ] && [ "''${XDG_VTNR:-0}" = "1" ]; then
             exec niri-session
           fi
         '';
