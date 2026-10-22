@@ -56,9 +56,13 @@ in
         history = {
           expireDuplicatesFirst = true;
           ignoreSpace = true;
+          ignoreDups = true;
+          share = true;
+          findNoDups = true;
           size = 200000;
           save = 100000;
         };
+        autocd = true;
 
         syntaxHighlighting = {
           enable = true;

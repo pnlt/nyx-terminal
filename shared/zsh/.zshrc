@@ -9,6 +9,8 @@ zstyle ':completion:*' matcher-list '' 'm:{a-zA-Z}={A-Za-z}' 'r:|=*' 'l:|=* r:|=
 
 # https://stackoverflow.com/a/11873793
 setopt interactivecomments
+setopt NOBEEP
+setopt NUMERIC_GLOB_SORT  # sort file10 after file9, not after file1
 
 # On deleting with <Alt> + <Backspace> stops the behavior until finding
 # a non-alphanumeric character

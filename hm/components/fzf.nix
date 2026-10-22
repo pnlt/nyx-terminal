@@ -17,23 +17,23 @@ in
         enableZshIntegration = true;
 
         colors = {
-          "fg" = "#e8d4f3";
-          "fg+" = "#d0d0d0";
-          "bg" = "-1";
-          "bg+" = "#221326";
-          "hl" = "#4eb0d0";
-          "hl+" = "#4eb8dc";
+          "fg" = "#9f9e99";
+          "fg+" = "#a7d8b0";
+          "bg" = "#121212";
+          "bg+" = "#161719";
+          "hl" = "#9f9e99";
+          "hl+" = "#a7d8b0";
 
-          "spinner" = "#af5fff";
-          "marker" = "#782cce";
-          "prompt" = "#3d848b";
+          "spinner" = "#83799C";
+          "marker" = "#87ff00";
+          "prompt" = "#9f9e99";
           "pointer" = "#af5fff";
-          "header" = "#87afaf";
-          "info" = "#d2d286";
+          "header" = "#6D7580";
+          "info" = "#787487";
 
           "border" = "#262626";
-          "query" = "#d9d9d9";
-          "label" = "#aeaeae";
+          "query" = "#9f9e99";
+          "label" = "#9a9a9a";
         };
 
         defaultOptions = [
