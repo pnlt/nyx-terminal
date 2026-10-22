@@ -70,6 +70,7 @@ in
               if isLinux
               then "zsh"
               else "fish";
+            shell-integration-features = "no-cursor";
             desktop-notifications = "true";
             auto-update = "off";
             auto-update-channel = "tip";
