@@ -111,7 +111,8 @@ in {
     programs.tmux = {
       enable = true;
       terminal = "tmux-256color";
-      escapeTime = 0;
+      escapeTime = 10;
+      focusEvents = true;
       aggressiveResize = false;
       baseIndex = 100;
       historyLimit = 1000000;
