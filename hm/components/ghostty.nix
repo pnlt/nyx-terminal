@@ -38,7 +38,7 @@ in
             theme = "/home/pnlt/nixos-dotfiles/config/ghostty/themes/guts";
             cursor-style = "block";
             cursor-style-blink = "true";
-            font-synthetic-style = "bold";
+            # font-synthetic-style = "bold";
 
             background-opacity = "0.8";
             # background-opacity-cells = "true";
