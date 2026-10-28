@@ -6,7 +6,7 @@
   };
 
   core = {
-    editor = "nano -w";
+    editor = "nvim";
     whitespace = "trailing-space,space-before-tab";
   };
 
