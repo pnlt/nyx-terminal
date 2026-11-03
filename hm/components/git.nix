@@ -49,8 +49,17 @@
     ${builtins.readFile ../../shared/git/banned-languages-hook.sh}
   '';
 
+  policyScope = pkgs.writeShellScript "git-policy-scope" ''
+    export POLICY_SCOPE_GIT=${config.programs.git.package}/bin/git
+    export POLICY_SCOPE_OWNERS=${lib.escapeShellArg (lib.concatStringsSep " " cfg.policyOwners)}
+
+    ${builtins.readFile ../../shared/git/policy-scope.sh}
+  '';
+
   preCommitHook = pkgs.writeShellScript "git-pre-commit" ''
     set -e
+
+    ${policyScope} || exit 0
 
     ${bannedLanguagesHook}
     ${deadnixHook}
@@ -59,6 +68,8 @@
   '';
 
   postCommitHook = pkgs.writeShellScript "git-post-commit" ''
+    ${policyScope} || exit 0
+
     POST_COMMIT_HEAD=$(${config.programs.git.package}/bin/git rev-parse HEAD)
     export POST_COMMIT_HEAD
 
