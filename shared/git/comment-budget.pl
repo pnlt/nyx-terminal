@@ -10,8 +10,8 @@ exit 0 if lc($ENV{COMMENT_BUDGET} || '') =~ /^(off|0|no|skip)$/;
 
 my %PROFILE = (
     default => profile('',
-        MAX_BLOCK_LINES => 2, MAX_BLOCKS => 2, MIN_BLOCKS => 2,
-        CODE_PER_BLOCK => 400, MAX_DENSITY_PCT => 3, FREE_LINES => 4),
+        MAX_BLOCK_LINES => 2, MAX_BLOCKS => 4, MIN_BLOCKS => 2,
+        CODE_PER_BLOCK => 150, MAX_DENSITY_PCT => 3, FREE_LINES => 4),
     migration => profile('MIGRATION_',
         MAX_BLOCK_LINES => 4, MAX_BLOCKS => 6, MIN_BLOCKS => 2,
         CODE_PER_BLOCK => 50, MAX_DENSITY_PCT => 10, FREE_LINES => 6),
@@ -167,9 +167,18 @@ sub glob_rx {
     return qr{^$rx$};
 }
 
+my %ATTR_OFF;
+
+sub attr_off {
+    my ($path) = @_;
+    return $ATTR_OFF{$path} //=
+        (git('check-attr', 'comment-budget', '--', $path) // '') =~ /: (?:unset|false)$/m ? 1 : 0;
+}
+
 sub lang_for {
     my ($path) = @_;
     return undef if grep { $path =~ $_ } @EXCLUDE;
+    return undef if attr_off($path);
     return undef if $path =~ m{(?:^|/)(?:vendor|node_modules|third_party|\.direnv|dist|__generated__|__snapshots__)/};
 
     (my $base = $path) =~ s{.*/}{};
@@ -549,6 +558,10 @@ if (@overspent && !$only_generated) {
         "it cannot rot away from the code it claims to describe.",
         "",
         "Delete what the code already says. What survives, spend the budget on.",
+        "",
+        "Comments a tool parses (section markers, directives) are syntax, not prose.",
+        "Exempt their file for good:  echo '<path> -comment-budget' >> .gitattributes",
+        "Bypass once:                 COMMENT_BUDGET=off git commit ...",
         "";
 
     push @out,
