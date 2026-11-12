@@ -4,10 +4,25 @@
   ...
 }: let
   cfg = config.shared.fastfetch;
+  esc = builtins.fromJSON ''"\u001b"'';
+  # Column of the box's left edge: logo padding + widest logo line + gap.
+  infoCol = 26;
+  keyWidth = 14;
+  valueWidth = 26;
+  # Values have no common width, so the right edge is drawn by moving the
+  # cursor to an absolute column instead of padding.
+  inner = keyWidth + valueWidth;
+  rightEdge = "${esc}[${toString (infoCol + inner + 1)}G{#bright_black}│";
+  rule = lib.concatStrings (lib.replicate inner "─");
   # ANSI names, so the colors follow the terminal palette.
-  module = type: key: {
-    inherit type key;
-    keyColor = "blue";
+  border = left: right: {
+    type = "custom";
+    format = "{#bright_black}${left}${rule}${right}";
+  };
+  row = type: key: format: {
+    inherit type;
+    key = "{#bright_black}│ {#blue}${key}";
+    format = "${format}${rightEdge}";
   };
 in
   with lib; {
@@ -25,49 +40,40 @@ in
               "2" = "magenta";
             };
             padding = {
-              top = 2;
+              top = 3;
               left = 2;
               right = 4;
             };
           };
 
           display = {
-            separator = "  ";
-            key.width = 12;
+            separator = "";
+            key.width = keyWidth;
             color.output = "white";
             size.binaryPrefix = "iec";
           };
 
           modules = [
-            {
-              type = "title";
-              format = "{user-name-colored}{at-symbol-colored}{host-name-colored}";
-              color = {
-                user = "magenta";
-                at = "bright_black";
-                host = "blue";
-              };
-            }
-            {
-              type = "custom";
-              format = "{#bright_black}───────────────────────────────";
-            }
-            (module "os" " distro")
-            (module "kernel" " kernel")
-            (module "wm" " wm")
-            (module "packages" "󰏖 packages")
-            (module "shell" " shell")
-            (module "terminal" " term")
-            (module "cpu" " cpu")
-            (module "gpu" "󰢮 gpu")
-            (module "memory" "󰍛 memory")
-            ((module "disk" "󰋊 disk") // {hideFS = "tmpfs";})
-            (module "uptime" "󰅐 uptime")
+            (border "╭" "╮")
+            (row "title" " user" "{user-name}")
+            (row "title" "󰒋 host" "{host-name}")
+            (row "os" " distro" "{pretty-name}")
+            (row "kernel" " kernel" "{release}")
+            (row "wm" " wm" "{pretty-name} {version}")
+            (row "packages" "󰏖 packages" "{all} (nix)")
+            (row "shell" " shell" "{pretty-name} {version}")
+            (row "terminal" " term" "{pretty-name} {version}")
+            (row "cpu" " cpu" "{name}")
+            (row "gpu" "󰢮 gpu" "{name}")
+            (row "memory" "󰍛 memory" "{used} / {total}")
+            ((row "disk" "󰋊 disk" "{size-used} / {size-total}") // {hideFS = "tmpfs";})
+            (row "uptime" "󰅐 uptime" "{formatted}")
+            (border "╰" "╯")
             "break"
             {
               type = "colors";
               symbol = "circle";
-              paddingLeft = 1;
+              paddingLeft = 2;
             }
           ];
         };
