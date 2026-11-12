@@ -12,7 +12,7 @@
     rc = "rclone";
     tt = "ranger";
     poff = "poweroff";
-    neofetch = "macchina";
+    neofetch = "fastfetch";
     whoseport = "netstat -tulpln 2> /dev/null | grep :";
     nyancat = "nyancat --no-counter";
     ale = "alejandra --quiet";

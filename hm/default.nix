@@ -9,7 +9,7 @@
     ./components/git.nix
     ./components/lazygit
     ./components/less.nix
-    ./components/macchina
+    ./components/fastfetch
     ./components/magic-wormhole.nix
     ./components/starship.nix
     ./components/tmux
